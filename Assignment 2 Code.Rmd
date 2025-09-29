@@ -1,0 +1,1515 @@
+---
+title: "DEUL Assignment 2"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(naniar)
+library(VIM)
+library(mice)
+library(gridExtra)
+library(ks)
+library(scales)
+library(tidyr)
+library(lattice)
+library(GGally)
+library(tidyr)
+library(missForest)
+library(superMICE)
+library(imputeTS)
+library(factoextra)
+library(ggfortify)
+library(cluster)
+library(mclust)
+library(readr)
+
+```
+
+
+
+
+```{r Loading in the Data}
+data <- read_csv()
+
+```
+
+
+
+Part 1: EDA / Missing Data Analysis 
+
+1.1: Characteristics of the data
+
+Any outlier / extreme values 
+```{r}
+co = ggplot(data = data, aes(y = CO)) + 
+  geom_boxplot() +theme_bw()
+
+co2 = ggplot(data = data, aes(y = CO2)) + 
+  geom_boxplot() +theme_bw()
+
+meth = ggplot(data = data, aes(y = Methane)) + 
+  geom_boxplot() +theme_bw()
+
+cfc = ggplot(data = data, aes(y = CFC11)) + 
+  geom_boxplot() +theme_bw()
+
+no = ggplot(data = data, aes(y = NitrousOx)) + 
+  geom_boxplot() +theme_bw()
+
+grid.arrange(co, co2, meth, cfc, no, ncol = 5)
+```
+All of the data follows roughly even distributions 
+Except for Methane, which shows a drastic outlier 
+
+```{r}
+data[which.min(data$Methane), ]
+  #This is the point at which it occurs 
+```
+This row contains all of the lowest values 
+Is there any evidence of incorrect imputation or data collection? 
+Should this row be removed from the analysis?
+  Is this just a rare event? Why is the data surrounding 2013 so strange 
+
+
+
+```{r}
+par(mfrow = c(2, 3))
+
+co = plot(density(na.omit(data$CO)), main = "CO")
+co2 = plot(density(na.omit(data$CO2)), main = "CO2")
+meth = plot(density(na.omit(data$Methane)), main = "Methane")
+no2 = plot(density(na.omit(data$NitrousOx)), main = "NO2")
+cfc = plot(density(na.omit(data$CFC11)), main = "CFC")
+
+```
+This is the distribution of all of my data 
+
+KW test for normality 
+```{r}
+for  (col in colnames(data[,-c(1,7)])){
+  print(paste0("Column: ", col))
+  print(shapiro.test(as.numeric(data[[col]])))
+}
+```
+All distributions of my data are non-normal 
+
+```{r}
+qqnorm(clean_data[["CO"]])
+```
+
+
+
+```{r}
+for  (col in colnames(clean_data[,-c(1,7)])){
+  print(paste0("Column: ", col))
+  print(shapiro.test(as.numeric(data[[col]])))
+}
+```
+Even the cleaned data is non normally distributed 
+
+
+
+How do all of the variables change over time?
+```{r}
+ggplot(data = data, aes(x = Date, y = CO)) + 
+  geom_point() + geom_line() +theme_bw()
+
+plot(x = data$Date, y = data$Methane, ty = "l")
+
+```
+From this there appears to be seasonal trends 
+You can also visualise where the data is missing 
+
+
+Plotting the time gaps in original data 
+
+```{r}
+full_data  = data %>%
+  complete(Date = seq.Date(from = min(Date),
+                           to   = max(Date),
+                           by   = "month"))
+
+a = ggplot_na_distribution(full_data$CO2, x_axis_labels = full_data$Date) +
+  labs(x = "Date", y = "CO2 Value")
+
+b = ggplot_na_distribution(full_data$CO, x_axis_labels = full_data$Date) +
+  labs(x = "Date", y = "CO Value", title = "", subtitle = "")
+
+grid.arrange(a,b, ncol = 2)
+
+ggplot_na_distribution(full_data$Methane, x_axis_labels = full_data$Date)
+
+
+
+```
+
+
+
+
+```{r}
+par(mfrow = c(3,2)) 
+
+plot(x = data$Date, y = data$CO, ty = "l", xlab = "Date", ylab = "CO")
+plot(x = data$Date, y = data$CO2, ty = "l", xlab = "Date", ylab = "CO2")
+plot(x = data$Date, y = data$Methane, ty = "l", xlab = "Date", ylab = "Methane")
+plot(x = data$Date, y = data$NitrousOx, ty = "l", xlab = "Date", ylab = "NO2")
+plot(x = data$Date, y = data$CFC11, ty = "l", xlab = "Date", ylab = "CFC")
+```
+In all of these you can see obvious outlier at ~2013
+
+```{r}
+ggplot(data = data, aes(x=Date)) + 
+  geom_freqpoly() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  scale_x_date(labels = date_format("%Y-%m-%d"), 
+               breaks = seq(as.Date("2000-01-01"), as.Date("2019-12-01"), by = "1 year"),
+               limits = c(as.Date("2000-01-01"), as.Date("2019-12-01")))
+```
+This plot shows the distribution of the readings in time 
+  You can see that there are many peaks and troughs in the data 
+  
+  2006/2007 is just missing data 
+  
+  2013 has many reads in the first days (reading every day from jan 1 - 5) 
+  Followed by no more reads until 2016
+
+```{r}
+ggplot(data = data, aes(x = year)) + 
+  geom_bar(stat = "count") + 
+  theme_bw() +
+  scale_y_discrete(limits = seq(0,12,2))
+```
+I need to fill in values for 2005 and 2013 
+
+
+
+```{r}
+data$year = format(as.Date(data$Date, format="%Y-%m-%d"),"%Y")
+  #Making a column for the year 
+
+ggplot(data = data, aes(x = year)) + 
+  geom_bar(stat = "count") +
+  theme_bw() +
+  labs(x = "Year", 
+       title = "Number of Readings Taken per Year") +
+  scale_y_discrete(name = "Number of Readings", 
+                 limits = seq(0,12, 2))
+
+
+data_long = pivot_longer(data, cols = c(2:6), names_to = "Name", values_to = "Values")
+
+ggplot(data = data_long, aes(x = year, y = Values)) + 
+  geom_violin() +
+  geom_jitter(alpha = 0.2, aes(color = Name)) +
+  facet_wrap(.~Name, scales = "free_y") +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 6)) +
+  theme(legend.position = "none")
+```
+2006/7 are both missing data 
+2013
+
+This highlights that something is very wrong in 2013
+  Apart from methane there are no values that even resemble the others 
+  All readings are eieht drastically too high or too small 
+    
+  I think that these represent faulty readings due to imrpoper appartus use or imputtaion
+  And all of the data was inputted over a space of 5 days 
+  
+  The ACTUAL DATA SOURCE does not have these 
+  https://gml.noaa.gov/ccgg/trends_ch4/
+  It can be found here 
+  
+  
+  I am going to remove all data from 2013, as I believe it has resulted from improper data imputting / measurement 
+  
+  Remove after EDA / 
+
+
+```{r}
+clean_data = data %>% 
+  filter(year != 2013)
+
+View(clean_data)
+
+```
+
+
+```{r}
+co = ggplot(data = data, aes(x = Date, y = CO)) +
+  geom_line() +
+  geom_point() +
+  theme_bw() +
+  labs(title = "CO")
+
+co2 = ggplot(data = data, aes(x = Date, y = CO2)) +
+  geom_line() +
+  geom_point() +
+  theme_bw() +
+  labs(title = "CO2")
+
+meth = ggplot(data = data, aes(x = Date, y = Methane)) +
+  geom_line() +
+  geom_point() +
+  theme_bw() +
+  labs(title = "Methane")
+
+no2 = ggplot(data = data, aes(x = Date, y = NitrousOx)) +
+  geom_line() +
+  geom_point() +
+  theme_bw() +
+  labs(title = "NO2")
+
+cfc = ggplot(data = data, aes(x = Date, y = CFC11)) +
+  geom_line() +
+  geom_point() +
+  theme_bw() +
+  labs(title = "Chlorofluorocarbons")
+
+grid.arrange(ncol = 2, co, co2, meth, no2, cfc)
+```
+
+This highlights both the trends and missing years of data 
+  This is about the nature and characteristics of the data 
+  
+  THIS IS AFTER REMOVAL OF 2013
+  
+
+
+
+Highlighting relationship between the features 
+  Using a scatterplot matrix 
+  
+```{r}
+ggpairs(clean_data[, -c(1,7)]) + theme_bw()
+  #Not including the time and motnh in the scatterplot 
+
+```
+Every variable is highly correlated with each other, except for CO 
+
+You can also see the gaps in the data from the missing time periods 
+
+
+
+```{r}
+ggpairs(data[, -c(1,7)]) +theme_bw()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1.2: Missing Data Analysis 
+
+Use the full dataset to identify trends in missingness
+  MDA IS ON FULL DATASET - NOT WITH REMOVED VALUES 
+And identify whether missingness is related to extreme / outlier values 
+
+```{r}
+md.pattern(data)
+```
+From this you can estiamate the the data is not MCAR 
+As most of the missing data presides from CO and CO2 (no missing data for the others)
+Plot how these relate to one another (CO vs CO2)
+
+
+```{r}
+md.pairs(data)
+
+```
+There are trwo cases in which CO and CO2 are missing  (mm)
+rm/mr tell us that there are many observations with just CO and CO2 missing 
+
+
+```{r}
+aggr(data, col = mdc(1:2), numbers = TRUE, softVars = TRUE, labels = names(data), cex.axis = 1, gap = 3, ylab = c("Proportion of Missingness", "Missingness Pattern"))
+```
+
+```{r}
+sum(is.na(data["Methane"]))
+sum(is.na(data["CO2"]))
+sum(is.na(data["CO"]))
+sum(is.na(data["CFC11"]))
+sum(is.na(data["NitrousOx"]))
+```
+CO is the most missing (21 = 0.104)
+CO2 is second (14 = 0.066)
+1.1 percent of cases have both CO and CO2 missing 
+
+
+Making a margin plot 
+  How does the missing data for CO and CO2 relate to each othetr 
+```{r}
+marginplot(data[,c("CO", "CO2")], col = mdc(1:2), cex.numbers = 1.2, pch = 19)
+```
+CO2 missing values all occur in the "normal" range for CO (pink dots on x axis)
+But missing CO values (pink on y axis) also occur in extreme values for CO2 
+  But these are outliers 
+
+Relation of missignness and extreme values 
+  A missing value of CO was found at an extremely high value of CO2
+  (within 2013 data)
+```{r}
+data %>% 
+  filter(year == 2013)
+```
+
+
+
+Relationship between NA and Time?
+  This would imply MNAR
+
+```{r}
+time_na_df = data.frame("Year" = character(),
+                        "NA count" = numeric())
+#Df to store the counts 
+
+
+for(i in unique(data$year)){
+  #Iterates over every year in data 
+  
+  temp_data = data %>% filter(year == i)
+    #Selecting the rows only from that year 
+  
+  count = sum(is.na(temp_data))
+  
+  time_na_df = rbind(time_na_df, data.frame("Year" = i,
+                                            "NA count" = count))
+}
+
+ggplot(data = time_na_df, aes(x = Year, y = NA.count)) +
+  geom_bar(stat = "identity", aes(fill = time_na_df$NA.count)) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  labs(y = "Na Count", title = "Missing Data Count per Year")
+
+```
+There is a bit of relationship between missingness and time 
+It has increased over time, until 2018 where since it has not increased at all 
+
+This implies not MCAR 
+  As otherwise there would be no trend 
+  
+
+
+Littles test to determine MCAR 
+```{r}
+mcar_test(data)
+
+```
+This implies that the missing data is MCAR 
+  As p-value > 0.05, -> cannot reject null hypothesis (that the missing valeus are MCAR)
+
+
+
+
+Extreme values and missingness 
+  Use the base data - without removing 2013
+  As this might influence the EDA (remove before EDA though)
+  
+  Testing for MCAR: whether other variables have an influence on the missingness 
+
+```{r}
+data_na_colour = data %>% 
+  mutate(colour_na = ifelse(rowSums(is.na(across(c(1:6)))) == 0, "black", "red"))
+  #This creates a neew df with a new column that stores a colour value based on whether NA values are present 
+
+co = ggplot(data = data_na_colour, aes(y = CO, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs(title = "CO",
+       x = element_blank())
+
+co2 = ggplot(data = data_na_colour, aes(y = CO2, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs(title = "CO2",
+       x = element_blank())
+
+meth = ggplot(data = data_na_colour, aes(y = Methane, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs(title = "Methane", 
+       x = element_blank())
+
+no2 = ggplot(data = data_na_colour, aes(y = NitrousOx, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs(title = "NO2", 
+       x = element_blank())
+
+cfc = ggplot(data = data_na_colour, aes(y = CFC11, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs(title = "CFCs", 
+       x = element_blank())
+
+grid.arrange(ncol = 5, co, co2, meth, no2, cfc)
+
+```
+
+
+```{r}
+data_na_colour = clean_data %>% 
+  mutate(colour_na = ifelse(rowSums(is.na(across(c(1:6)))) == 0, "black", "red"))
+  #This creates a neew df with a new column that stores a colour value based on whether NA values are present 
+
+co = ggplot(data = data_na_colour, aes(y = CO, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs(
+       x = element_blank())
+
+co2 = ggplot(data = data_na_colour, aes(y = CO2, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs(
+       x = element_blank())
+
+meth = ggplot(data = data_na_colour, aes(y = Methane, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs( 
+       x = element_blank())
+
+no2 = ggplot(data = data_na_colour, aes(y = NitrousOx, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs( 
+       x = element_blank())
+
+cfc = ggplot(data = data_na_colour, aes(y = CFC11, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs(
+       x = element_blank())
+
+grid.arrange(ncol = 5, co, co2, meth, no2, cfc)
+```
+
+
+There is no apparaneht relationship between outliers and extreme values 
+  For every single variable 
+  
+  The extreme values are a mix of fully available data and missing data 
+  
+  Therefore this implies that it is not MNAR
+    As there is no relationship between extreme values and missingness in rows 
+    
+    Especially as many are highly correlated with one another 
+      If one value was very high (other likely is)
+      
+      CAN I USE THIS TO ESTIMATE THE VALUES OF THE MISSING VALUES -> COMPARE TO THE NON MISSING 
+        Do for all except CO (not related enough)
+
+  There is no relationship between misssingness and the weird 2013 values 
+  
+If it was MNAR you would expect missing values to occur at more extreme values for every one of these variables 
+  As they are so highly correlated extreme -> extreme of that value
+  
+  As there is none, there is seemingly no influence of its own value (using measure of others as proxy) on its missingness 
+  
+
+```{r}
+par(mfrow = c(2,3))
+
+plot(density(na.omit(filter(data_na_colour, colour_na =="black"))$CO), col = "black", main = "CO")
+lines(density(na.omit(filter(data_na_colour, colour_na == "red")$CO)), col = "red")
+
+plot(density(na.omit(filter(data_na_colour, colour_na =="black"))$CO2), col = "black", main = "CO2")
+lines(density(na.omit(filter(data_na_colour, colour_na == "red")$CO2)), col = "red")
+
+plot(density(na.omit(filter(data_na_colour, colour_na =="black"))$Methane), col = "black", main = "Methane")
+lines(density(na.omit(filter(data_na_colour, colour_na == "red")$Methane)), col = "red")
+
+plot(density(na.omit(filter(data_na_colour, colour_na =="black"))$CFC11), col = "black", main = "CFC")
+lines(density(na.omit(filter(data_na_colour, colour_na == "red")$CFC11)), col = "red")
+
+plot(density(na.omit(filter(data_na_colour, colour_na =="black"))$NitrousOx), col = "black", main = "NO2")
+lines(density(na.omit(filter(data_na_colour, colour_na == "red")$NitrousOx)), col = "red")
+
+```
+This shows the distribution fo all the variables 
+Seperated by the presence of NA values 
+
+Is there a change in the distibutions of NA and non-NA values 
+  Especially at extreme values 
+    If spike -> extreme values may influence the presence of NA (maybe MNAR)
+    
+The spikes only represent a single missing value row in all of the data (see above plot)
+Use both to prove non MNAR 
+    
+    
+    
+    
+  
+
+
+1.3 - Dealing wihh missing values 
+  Due to the missingness being MAR 
+  I am going to use imputation method 
+  
+  Also I need to impute for the time periods that are missign / incomplete 
+    2005 and 2013 (see bar chart above)
+    
+  Use the 2013 removed data 
+    As at this stage I have explored it and identified that it is improper 
+
+
+
+
+What Imputation method should I use?
+
+I am going to test different imputation strategies and use the best 
+
+
+MI:
+Regression
+RF 
+  USing RF in SI and MI allows us to compare the results from single and multiple imputation    
+  MI allows us to capture more noise 
+SuperMICE 
+
+COmpare imputation on all of the data vs only on the partially filled times 
+
+
+
+IMPUTATION OF ALL ROWS 
+  INCLUDING THE MISSING ROWS FOR TIMESTEPS 
+
+Converting the data into an appropriate format
+  Using data_clean (with 2013 removed)
+  
+  I want to impute values for the missing years as well 
+  
+  Need to add more rows 
+  
+```{r}
+full_data  = clean_data %>%
+  complete(Date = seq.Date(from = min(Date),
+                           to   = max(Date),
+                           by   = "month"))
+#The complete() function fills in missing data 
+#Fillls in rows of data that is missing from the min and max of my data by month
+#Maintains ordering 
+
+full_data = full_data %>% select(-year)
+  #Removing the unneeded year column 
+
+ggplot_na_distribution(full_data$CO2)
+ggplot_na_distribution(full_data$CO)
+  #Distribute the values of missing data well 
+  #Can see the veryt clearn gaps in the data 
+
+
+statsNA(data$CO)
+
+statsNA(data$CO2)
+
+data_imp = na_kalman(full_data)
+  #IMputing the missing values 
+
+ggplot_na_imputations(full_data$CO, data_imp$CO)
+ggplot_na_imputations(full_data$CO2, data_imp$CO2)
+  #PLots hwo the values were imputed 
+
+
+data_imp = data_imp %>% 
+  mutate(na_row = ifelse(row_number() %in% na_rows, "na_row", "non_na"))
+
+
+ggpairs(data_imp %>% select(-na_row),  # exclude na_row from the data used in the plot
+  mapping = aes(color = data_imp$na_row),  # use it just for coloring
+  upper = list(continuous = wrap("points", alpha = 0.6)),
+  lower = list(continuous = wrap("points", alpha = 0.6)),
+  diag = list(continuous = wrap("densityDiag", fill = "grey"))) + theme_bw()
+
+```
+
+This is not as good 
+The missing data valeus have no seasonal element, and should not be used 
+
+
+
+IMPUTATION OF PARTIALLY FILLED ROWS 
+  using clean_data
+
+
+```{r Regression}
+na_rows = which(is.na(clean_data[,-c(1,7)]), arr.ind = TRUE)[1:34]
+
+
+
+imp_reg = mice(clean_data[,-c(1,7)], m = 10, seed = 42, print = FALSE)
+  #This creates 10 imputed datasets 
+
+xyplot(imp_reg, CO ~ CO2 | .imp, pch = 20, cex = 1.4)
+  #PLotting the imputed values 
+  # | .imp factes the plot by imputatiib number 
+
+densityplot(imp_reg)
+
+imp_reg = complete(imp_reg)
+
+imp_reg = imp_reg %>% 
+  mutate(na_row = ifelse(row_number() %in% na_rows, "na_row", "non_na"))
+
+
+ggpairs(imp_reg %>% select(-na_row),  # exclude na_row from the data used in the plot
+  mapping = aes(color = imp_reg$na_row),  # use it just for coloring
+  upper = list(continuous = wrap("points", alpha = 0.6)),
+  lower = list(continuous = wrap("points", alpha = 0.6)),
+  diag = list(continuous = wrap("densityDiag", fill = "grey"))) + theme_bw()
+
+
+
+```
+
+There is variation
+
+
+
+```{r Random Forest}
+
+imp_rf = mice(clean_data[,-c(1,7)], method = "rf", m = 5, seed = 42, print = FALSE)
+  #This creates 10 imputed datasets 
+
+xyplot(imp_rf, CO ~ CO2 | .imp, pch = 20, cex = 1.4)
+  #PLotting the imputed values 
+  # | .imp factes the plot by imputatiib number 
+
+densityplot(imp_rf)
+
+imp_rf = complete(imp_rf)
+
+imp_rf = imp_rf %>% 
+  mutate(na_row = ifelse(row_number() %in% na_rows, "na_row", "non_na"))
+
+
+ggpairs(imp_rf %>% select(-na_row),  # exclude na_row from the data used in the plot
+  mapping = aes(color = imp_rf$na_row),  # use it just for coloring
+  upper = list(continuous = wrap("points", alpha = 0.6)),
+  lower = list(continuous = wrap("points", alpha = 0.6)),
+  diag = list(continuous = wrap("densityDiag", fill = "grey"))) + theme_bw()
+
+
+```
+
+```{r PMM}
+imp_pmm = mice(clean_data[,-c(1,7)], method = "pmm", m = 5, seed = 42, print = FALSE)
+  #This creates 10 imputed datasets 
+
+xyplot(imp_pmm, CO ~ CO2 | .imp, pch = 20, cex = 1.4)
+  #PLotting the imputed values 
+  # | .imp factes the plot by imputatiib number 
+
+densityplot(imp_pmm)
+
+imp_pmm = complete(imp_pmm)
+
+imp_pmm = imp_pmm %>% 
+  mutate(na_row = ifelse(row_number() %in% na_rows, "na_row", "non_na"))
+
+
+ggpairs(imp_pmm %>% select(-na_row),  # exclude na_row from the data used in the plot
+  mapping = aes(color = imp_pmm$na_row),  # use it just for coloring
+  upper = list(continuous = wrap("points", alpha = 0.6)),
+  lower = list(continuous = wrap("points", alpha = 0.6)),
+  diag = list(continuous = wrap("densityDiag", fill = "grey"))) + theme_bw()
+
+```
+
+
+```{r Super MICE}
+
+imp_sl = mice(clean_data[,-c(1,7)], method = "SuperLearner", m = 10, seed = 42, print = FALSE, SL.library = c("SL.rpart", "SL.mean"))
+  #SL.Library tells the model which methods to use within the enseble 
+# Values generated are a weighted average of these 
+
+
+
+xyplot(imp_sl, CO ~ CO2 | .imp, pch = 20, cex = 1.4)
+  #PLotting the imputed values 
+  # | .imp factes the plot by imputatiib number 
+
+densityplot(imp_sl)
+
+```
+This works better than the other methods, but not as good as the individual supermice 
+
+
+Supermice only works when you have completed other variables 
+Unless you use worse methods (rpart, mean) 
+
+to counter this I could iterate over every column
+Fill in others with regression 
+Then fill in the values 
+
+
+
+
+
+```{r superMice}
+columns = c("CO", "CO2")
+  #CO has more missing values -> this is being treated first 
+  #As less regression imputed (the worse imputation) is influencing this
+
+imputed_list = vector("list", 5)
+  #To store the dataframes 
+
+for (i in 1:5) {
+    #Repeating 5 times, equivalent to m = 5
+
+  imp_data = mice(clean_data[,-c(1,7)], m = 1, seed = 42 + i, print = FALSE)
+  imp_data = complete(imp_data)
+    #Filling missing values using single regression imputation 
+    #This is required as many SL.library methods require full data (except for the imputtaion column) 
+    
+    for (col in columns) {
+        #Iterating over each of the columns that require imputation (CO and CO2)
+
+    
+      na_index = which(is.na(clean_data[,-c(1,7)]), arr.ind = TRUE)
+    
+    # Loop over the NA positions and set to NA in imp_data only for the current target column
+      for (j in seq_len(nrow(na_index))) {
+        row_num = na_index[j, "row"]
+        col_index = na_index[j, "col"]
+            #Extracting the rowand column indexes for the na values 
+        
+        # Check if the column at this index matches the target column name
+        if (colnames(imp_data)[col_index] != col) {
+          next
+        }
+        
+        imp_data[row_num, col_index] = NA
+          #Changing back to NA (all fo the values that were NA)
+      }
+    
+    # Impute the current column using SuperLearner (other columns remain filled)
+      imp_data <- mice(imp_data,
+                       method = "SuperLearner",
+                       m = 1,
+                       seed = 42 + i,  # Varying the seed for variability among iterations
+                       print = FALSE,
+                       SL.library = c("SL.randomForest", "SL.glm", "SL.glmnet"))
+      imp_data <- complete(imp_data)
+    }
+  
+  imputed_list[[i]] <- imp_data
+    #Save the final imputed data frame for this iteration
+}
+
+#Assigning each to a variable for analysis 
+imp_data_1 = imputed_list[[1]]
+imp_data_2 = imputed_list[[2]]
+imp_data_3 = imputed_list[[3]]
+imp_data_4 = imputed_list[[4]]
+imp_data_5 = imputed_list[[5]]
+
+imp_data_1 = imp_data_1 %>% 
+  mutate(na_row = ifelse(row_number() %in% na_rows, "na_row", "non_na"))
+#Assigning values to rows that contain NA values (for analysis of the imputed values)
+
+```
+
+
+
+```{r}
+par(mfrow = c(1,2))
+plot(density(na.omit(clean_data$CO)), col = "blue", main = "CO")
+lines(density(imp_data_1$CO), col = "red")
+lines(density(imp_data_2$CO), col = "red")
+lines(density(imp_data_3$CO), col = "red")
+lines(density(imp_data_4$CO), col = "red")
+lines(density(imp_data_5$CO), col = "red")
+
+plot(density(na.omit(clean_data$CO2)), col = "blue", main = "CO2")
+lines(density(imp_data_1$CO2), col = "red") 
+lines(density(imp_data_2$CO2), col = "red")
+lines(density(imp_data_3$CO2), col = "red") 
+lines(density(imp_data_4$CO2), col = "red") 
+lines(density(imp_data_5$CO2), col = "red") 
+
+
+ggpairs(
+  imp_data_1 %>% select(-na_row),  
+    #exclude na_row from the data used in the plot
+  mapping = aes(color = imp_data_1$na_row),  
+    #use it just for coloring
+  upper = list(continuous = wrap("cor", 
+                      method = "pearson", 
+                      use = "pairwise.complete.obs")),
+  diag = list(continuous = wrap("densityDiag", fill = "grey")),
+  lower = list(continuous = wrap("points", alpha = 0.6))) +
+  theme_bw()
+```
+
+The distributions for all of the imputed values very closely fit the distribtuion
+They also fit well in the correlations 
+-> I am going to use this in my analysis 
+
+This shows:
+The distributions fo the imputed rows compared to the non
+Their interactions with themselves 
+
+
+
+Temporal / Seasonal Time Series Analysis 
+  This needs to occur AFTER imputation as it expects full data
+  
+  Repeat (below) for all variables to see how they change with time 
+    Part of the EDA 
+
+```{r}
+temp_clean_data = na.omit(data)
+
+start_year = as.numeric(format(temp_clean_data$Date[1], "%Y"))
+start_month = as.numeric(format(temp_clean_data$Date[1], "%m"))
+  #I need to make sure I specify the start year and month from within my data 
+
+CO2ts = ts(temp_clean_data$CO2,
+           start = c(start_year, start_month),
+           frequency = 12)
+
+decomp_co2 = stl(CO2ts, s.window = "periodic")
+
+plot(decomp_co2)
+
+
+
+```
+DO this for every variable on the UNCLEANED DATA 
+  This is part of the nature / charateristics of each variable
+  
+Then repeat for trhe processed data (cleaned / imputed)
+  COmpare 
+
+
+time series analysis on the cleaned data 
+```{r}
+imp_data = cbind(imp_data_1, clean_data["Date"])
+
+start_year = as.numeric(format(imp_data$Date[1], "%Y"))
+start_month = as.numeric(format(imp_data$Date[1], "%m"))
+  #I need to make sure I specify the start year and month from within my data 
+
+COts = ts(imp_data$CO2,
+           start = c(start_year, start_month),
+           frequency = 12)
+
+decomp = stl(COts, s.window = "periodic")
+plot(decomp)
+```
+
+
+Dimensionality Reduction:
+
+I am going to use PCA 
+On the 
+
+
+```{r}
+
+pc_data = imp_data %>% 
+  select( -c( "Date", "na_row"))
+  #Selecting just the numeric data for dimensionaltiy reduction 
+
+
+pc_out = prcomp(pc_data, scale = TRUE)
+
+summary(pc_out)
+
+pc_var = pc_out$sdev^2
+
+plot(pc_out, col = "steelblue", main = "Importance of Each PC")
+lines(x = 1:5, pc_var, type = "b", pch = 19, col = "red")
+
+ggpairs(pc_out$x) +theme_bw()
+
+
+```
+
+
+I am going to use 2 principal components as together they satisfy > 0.95 of the variation 
+
+The PC's are not correlated with one another 
+
+
+
+Contributions of variables to PC's 
+
+```{r}
+
+autoplot(pc_out, loadings = TRUE, loadings.colour = "steelblue", 
+         loadings.label = TRUE, col = rgb(0,0,0,0.3)) + theme_bw()
+```
+
+```{r}
+
+a = fviz_contrib(pc_out, choice = "var", axes = 1, top = 5)
+b = fviz_contrib(pc_out, choice = "var", axes = 2, top = 5)
+
+grid.arrange(a,b, ncol = 2)
+```
+
+These loading vectors also tell us how each of the original variables contribute to the selected PC's
+  You can see that all but CO contribute to the main source of variation (PC1) 
+  Just CO contributes to PC2 
+  
+This is corroborated by the contribution plots 
+
+MEthane is the least important compared to NO2 CFC and CO2 
+  (the other three all capture more variation)
+
+These results sugggest that CO and the rest of the variables represent variation in perpendicular directions 
+  As PC2 always goes in the perpendicular direction to PC1 (to capture the most variance)
+
+
+
+Analysis of my selected PC's 
+  How they relate to time 
+
+```{r}
+
+length(pc_out$x[,1])
+
+pc_out$x
+sel_pc = cbind(pc_out$x[,1], pc_out$x[,2], clean_data["Date"])
+  #Extracting the values of the first PC and the date 
+colnames(sel_pc) = c("PC1", "PC2", "Date")
+
+
+plot(x = sel_pc$PC1, y = sel_pc$PC2, ty = "b", pch = 16, main = "Change in Pricipal Components with Time", col = sel_pc$Date)
+
+ggplot(data = sel_pc, aes(x = PC1, y = PC2)) + 
+  geom_point(aes(color = Date)) + theme_bw() +
+  geom_line(aes(col = Date), alpha = 0.3)
+
+ggplot(data = sel_pc, aes(x = Date, y = PC1, color = Date)) +
+  geom_point(aes(size = PC2), alpha = 0.3) +
+  theme_bw()
+
+ggplot(data = sel_pc, aes(x = Date, y = PC2, color = Date)) +
+  geom_point(aes(size = PC1), alpha = 0.3) +
+  theme_bw()
+
+```
+
+PC1:
+  This is represented by all variables except fpor CO 
+  This shows a linear relationships with time 
+  Increasing 
+  
+PC2: 
+  This is represented almost exclusively by CO 
+  Shows no relationships with time 
+  
+Gaps amplified by the missing data
+
+PC1/PC2:
+  When plotting together you can see that PC1 increases with date, but PC2 intorduces large amounts of varibaility into the dimensionality 
+
+
+
+```{r fig.width=10, fig.height=6}
+
+start_year = as.numeric(format(sel_pc$Date[1], "%Y"))
+start_month = as.numeric(format(sel_pc$Date[1], "%m"))
+  #I need to make sure I specify the start year and month from within my data 
+
+PC1ts = ts(sel_pc$PC1,
+           start = c(start_year, start_month),
+           frequency = 12)
+
+decomp_pc1 = stl(PC1ts, s.window = "periodic")
+
+PC2ts = ts(sel_pc$PC2,
+           start = c(start_year, start_month),
+           frequency = 12)
+
+decomp_pc2 = stl(PC2ts, s.window = "periodic")
+
+
+a = autoplot(decomp_pc1) + theme_bw() +labs(y = "PC1")
+b = autoplot(decomp_pc2) + theme_bw() + labs(y = "PC2")
+fig.dim = c(8, 20)
+grid.arrange(a, b, ncol = 2)
+```
+
+PC1: 
+  SHows upwards trend with time 
+  Strong seasonal component 
+  Large amounts of noise at ~ 2006 and ~2011
+    Why?
+    
+PC2: 
+  Shows no clear trend 
+  Has seasonal component still 
+  More random noise / variation 
+
+
+
+
+
+
+
+
+
+
+Clustering:
+
+K-medoids 
+  I need to find optimal value of K 
+
+```{r}
+pc_scaled = scale(sel_pc[,-3])
+  #Scaling the data 
+  #To account for potentially high variance 
+
+fviz_nbclust(pc_scaled, kmeans, method = "silhouette") +
+  labs(title = "K-means Sillhouette Scores")
+fviz_nbclust(pc_scaled, clara, method = "silhouette") +
+  labs(title = "PAM")
+fviz_nbclust(pc_scaled, hcut, method = "silhouette") +
+  labs(title = "Hierarchal")
+
+fviz_nbclust(pc_scaled, kmeans, method = "wss") +
+  labs(title = "wss")
+  #This does not have a major impact on the results (I would still have chosen 3)
+
+
+```
+
+All clusteing methods (with defined K) show similar results 
+  That more clusters = better
+  
+But all of the sillhouette valkues are similar when clusters > 3
+  -> choose K = 3
+  This is as the less clusters you have the easier to interpret and less overfitting that occurs 
+
+
+
+
+
+
+
+
+
+Performign clustering with K = 3
+```{r}
+km_clus = kmeans(pc_scaled, 3, nstart = 25)
+
+var_exp = km_clus$betweenss / km_clus$totss
+print(paste0("The variance explained by these clusters are: ", var_exp))
+
+fviz_cluster(km_clus, pc_scaled, ellipse.type = "norm") + theme_bw() + labs(title = "K-means Cluster Plot")
+
+
+
+```
+
+This method assumes that the esitsing clusters (in the real world) are spherical and of equal sizes 
+
+
+
+Vairation explained 
+ííí
+```{r}
+
+
+var_exp = km_clus$betweenss / km_clus$totss
+
+print(paste0("The variation explained in this model is: ", var_exp))
+
+
+```
+
+
+Measuring variation explained with each value of K 
+
+```{r}
+results = list()
+  #To store the results 
+  #Use reults[[]] = , to store 
+
+
+print(results)
+
+for (i in  1:10){
+  #Iterating over every number of cluster
+  
+  temp_clus = kmeans(pc_scaled, i, nstart = 25) 
+  
+  var_exp = temp_clus$betweenss / temp_clus$totss
+  
+  results[[i]] = var_exp
+}
+
+
+results = data.frame(results)
+colnames(results) = c(1:10)
+
+results = pivot_longer(results, cols = everything())
+  #Converting to long formatting for plotting using ggplot 
+
+ggplot(data = results, aes(x = as.numeric(name), y = value, fill = value)) +
+  geom_bar(stat = "identity") + 
+  theme_bw() +
+  scale_x_discrete(limits = c(1:10)) +
+  labs(x = "Value of K", 
+       y = "Propotion of Variance Explained") +
+  theme(legend.position = "none")
+
+```
+
+
+
+This will always increase as clusters increase 
+
+Gaussian Clustering 
+
+```{r}
+gc_clus = Mclust(pc_scaled)
+
+gc_clus$BIC
+
+plot(gc_clus, what = "BIC")
+
+```
+
+The strength of each of the gaussian model types:
+  (higher BIC = better)
+  
+  
+Having G = 3 has the hughest BIC -> the best 
+  THe best three are: EEE (3), VEI(3), EEI(4)
+
+
+Compare the results of these three 
+
+
+EEE = best 
+  Each clusters covariance matrix is the same
+  All clusters spherical / same size (fits the assumption of k-means)
+  
+  
+Comparing Gaussian Results 
+
+EEE
+```{r}
+eee_clus = Mclust(pc_scaled, G = 3, modelNames = "EEE")
+
+plot(eee_clus, what = "classification")
+plot(eee_clus, what = "density")
+
+```
+
+VEI
+```{r}
+vei_clus = Mclust(pc_scaled, G = 3, modelNames = "VEI")
+
+plot(vei_clus, what = "classification")
+
+```
+
+EEI 
+
+```{r}
+eei_clus = Mclust(pc_scaled, modelNames = "EEI", G = 4) 
+
+plot(eei_clus, what = "classification")
+
+```
+
+These are the results from the top 3 performing Gaussian models 
+
+
+
+Cluster Analysis: 
+  How has the cluster changed along time? 
+  For both the K-means and the gaussian 
+  
+  
+I need to 
+  Extract the clusters 
+  Place alongside the date 
+  PLot ona  time graph (Cluster on y)
+  
+
+k-means 
+
+Scale() retains ordering 
+```{r}
+
+
+time_km = data.frame(km_clus$cluster)
+time_km = cbind(time_km, clean_data$Date)
+colnames(time_km) = c("Cluster", "Date") 
+
+ggplot(data = time_km, aes(x = Date, y = Cluster)) + 
+  geom_point(aes(col = as.factor(Cluster))) + 
+  geom_line(alpha = 0.3) + theme_bw() +
+  theme(legend.position = "none") +
+  scale_y_discrete(limits = c(1:3))
+
+class(time_km$Date)
+
+```
+
+From this you can determine that between 200 - 2010 we differed between cluster 1 and 2 
+But following 2010 we started fazing into cluster 3 
+And this has retained Until modern day 
+
+  What do the clusters represent, waht can we determine from this?
+  
+  
+Gaussian
+```{r}
+
+
+time_gs = data.frame(eee_clus$classification)
+time_gs = cbind(time_gs, clean_data$Date)
+colnames(time_gs) = c("Cluster", "Date")
+
+ggplot(data = time_gs, aes(x = Date, y = Cluster)) +
+  geom_point(aes(col = as.factor(Cluster))) + 
+  geom_line(alpha = 0.3) + theme_bw() +
+  theme(legend.position = "none") +
+  scale_y_discrete(limits = c(1:3))
+
+
+```
+
+
+The gaussian clustering implies a much more time linear seperation between the clusters 
+Steps from one cluster to another 
+
+Difficult to differentiate between the time steps as those periods was missing data 
+  Results would have looked different if we had performed time series imputation on all of the missing data 
+
+
+
+
+Repeating the process for all 5 datasets 
+  Save row indexes for missing values 
+  Convert to PCs
+  Extract top 2 
+  Extract the coords for the imputed values 
+  Combine into single df 
+  Plot ons catter comparing how the values of the PC's changed 
+  
+
+
+On a scatterplot 
+Just plot the different PC 1/2 coordinates for each of the imputed values 
+Have colour = to the dataframe 
+And colour them depending 
+Overlay will tell you the similarity 
+
+TO demonstrate the similarity of the results 
+  Despite the missingness variation 
+
+```{r}
+na_rows = na_index[, "row"]
+  #This is all of the rows that contained NA values 
+
+to_pc = function(input_data){
+  pc = prcomp(input_data, scale = TRUE)
+    #Converts to PC
+  
+  pc = cbind(pc$x[,1], pc$x[,2])
+  colnames(pc) = c("PC1", "PC2")
+    #Extracts the PCs 
+  
+  pc = data.frame(pc)
+  
+  pc = pc %>% 
+      mutate(was_na = ifelse(row_number() %in% na_rows, "na_row", "non_na"))
+  #Variable assigned to rows that had values imputed 
+  
+  pc = pc %>% 
+    filter(was_na == "na_row")
+    #Only selecting the coords that had values imputed 
+  
+  pc$number = 1:nrow(pc)
+  
+  return(pc)
+}
+
+
+
+```
+
+
+Comparing the data with variance between the missingness 
+  Generated during different iterations of multiple imputation
+
+```{r}
+temp = sel_pc %>%
+  mutate(was_na = ifelse(row_number() %in% na_rows, "na_row", "non_na"))
+  
+temp$M = 1
+  #Saving the number of the imputed dataset (1-5)
+
+all_data = temp %>% select(- Date) %>%
+  filter(was_na == "na_row")
+  #This will store all of the coordinates for the NA values
+  #For every imputed dataset 
+
+all_data$number = 1:nrow(all_data)
+
+temp = to_pc(imp_data_2) 
+  #This will extract the PC's
+temp$M = 2
+all_data = rbind(all_data, filter(temp, was_na == "na_row"))
+
+temp = to_pc(imp_data_3) 
+temp$M = 3
+all_data = rbind(all_data, filter(temp, was_na == "na_row"))
+
+temp = to_pc(imp_data_4) 
+temp$M = 4
+all_data = rbind(all_data, filter(temp, was_na == "na_row"))
+
+temp = to_pc(imp_data_5) 
+temp$M = 5
+all_data = rbind(all_data, filter(temp, was_na == "na_row"))
+
+View(all_data)
+
+
+```
+
+
+
+Plotting the variability between imputed values 
+  By accounting for missignness distribution
+```{r}
+ggplot(data = filter(all_data, M != 1), aes(x = PC1, y = PC2, col = as.factor(M))) + 
+  geom_point(alpha = 0.6, size = 2) + theme_bw() +
+  geom_point(data = filter(all_data, M == 1), shape = 24, fill = "blue", col = "blue") 
+
+ggplot(all_data, aes(x = PC1, y = PC2)) +
+  geom_point(aes(col = as.factor(M)), alpha = 0.6, size = 2) +
+  geom_point(data = filter(all_data, M == 1), shape = 24, fill = "blue", col = "blue") +
+  geom_line(aes(group = number), color = "black", linewidth = 0.5) +
+  theme_bw() +
+  labs(color = "Imputed Dataset") +
+  theme(legend.position = "bottom")
+
+```
+
+This shows how the values of the PC's vary between different imputed datasets 
+  There is difference but not drastic 
+  
+  Further research should focus on testing how this variation alters the cluster anlaysis 
+  
+
+```{r}
+
+imputed = all_data %>% 
+  filter(M == 1) %>% 
+  select(number, imputed_x = PC1, imputed_y = PC2)
+  #This selects the points I used in my analysis 
+  #Where M = 1
+
+others = all_data %>% 
+  filter(M %in% 2:5)
+  #Selecting all the other points generated during my multiple imputation
+
+segments_data = others %>% 
+  left_join(imputed, by = "number")
+  #Joining the two together 
+
+
+ggplot(data = filter(all_data, M != 1), aes(x = PC1, y = PC2, color = factor(M))) +
+  geom_point(alpha = 0.4, size = 2) +
+  geom_point(data = filter(all_data, M == 1), aes(x = PC1, y = PC2), fill = "blue" , size = 3, alpha = 0.8, shape = 24) +
+  geom_segment(data = segments_data, 
+               aes(x = PC1, y = PC2, xend = imputed_x, yend = imputed_y),
+               arrow = arrow(length = unit(0.15, "cm")), 
+               color = "blue", linewidth = 0.5, linetype = "dashed",
+               alpha = 0.4) +
+    #Adding a line connecting the point I used and the other points from M 
+  theme_bw() + 
+  labs(color = "Imputed Dataset") +
+  theme(legend.position = "bottom")
+
+```
+
+
+
+Cluster Analysis on the Time Filled Data
+```{r}
+pc = prcomp(select(data_imp, -c(1,7)), scale = TRUE)
+pc = cbind(pc$x[,1], pc$x[,2])
+colnames(pc) = c("PC1", "PC2")
+pc = data.frame(pc)
+  #Dataframe of the PC's
+
+pc_scaled = scale(pc)
+
+gc_time = Mclust(pc_scaled)
+
+gc_time$BIC
+
+plot(gc_time, what = "BIC")
+
+best_time_clus = Mclust(pc_scaled, G = 7, modelNames = "VVV")
+
+plot(best_time_clus, what = "classification")
+plot(best_time_clus, what = "density")
+
+```
+
+
+```{r}
+# Define the continuous variables (adjust names if necessary)
+continuous_vars <- c("CO", "CO2", "Methane", "NitrousOx", "CFC11")
+
+# Loop through each variable and output outlier information along with the year
+for (var in continuous_vars) {
+  # Calculate quartiles and IQR for the variable, ignoring NA values
+  Q1 <- quantile(data[[var]], 0.25, na.rm = TRUE)
+  Q3 <- quantile(data[[var]], 0.75, na.rm = TRUE)
+  IQR_val <- Q3 - Q1
+  
+  # Define lower and upper bounds for outliers
+  lower_bound <- Q1 - 1.5 * IQR_val
+  upper_bound <- Q3 + 1.5 * IQR_val
+  
+  # Filter rows that are outliers for this variable, ignoring NA values
+  outliers_df <- data[!is.na(data[[var]]) & (data[[var]] < lower_bound | data[[var]] > upper_bound), ]
+  
+  cat("\nOutliers in", var, ":\n")
+  
+  if (nrow(outliers_df) == 0) {
+    cat("No outliers found based on the 1.5 * IQR rule.\n")
+  } else {
+    cat("Found", nrow(outliers_df), "outlier(s).\n")
+    # Loop through each outlier and print its year and value
+    for (i in 1:nrow(outliers_df)) {
+      outlier_val <- round(outliers_df[[var]][i], 2)
+      year_val <- outliers_df[["year"]][i]
+      cat("Year:", year_val, "- Value:", outlier_val, "\n")
+    }
+  }
+}
+
+
+
+```
+

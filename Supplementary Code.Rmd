@@ -1,0 +1,724 @@
+---
+title: "Supplementart Code"
+output: html_notebook
+---
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(naniar)
+library(VIM)
+library(mice)
+library(gridExtra)
+library(ks)
+library(scales)
+library(tidyr)
+library(lattice)
+library(GGally)
+library(tidyr)
+library(missForest)
+library(superMICE)
+library(imputeTS)
+library(factoextra)
+library(ggfortify)
+library(cluster)
+library(mclust)
+```
+
+
+
+```{r}
+data <- read_csv()
+```
+
+Figure 1:
+```{r}
+co = ggplot(data = data, aes(x = Date, y = CO)) +
+  geom_line() +
+  geom_point() +
+  theme_bw() +
+  labs(title = "CO")
+
+co2 = ggplot(data = data, aes(x = Date, y = CO2)) +
+  geom_line() +
+  geom_point() +
+  theme_bw() +
+  labs(title = "CO2")
+
+meth = ggplot(data = data, aes(x = Date, y = Methane)) +
+  geom_line() +
+  geom_point() +
+  theme_bw() +
+  labs(title = "Methane")
+
+no2 = ggplot(data = data, aes(x = Date, y = NitrousOx)) +
+  geom_line() +
+  geom_point() +
+  theme_bw() +
+  labs(title = "NO2")
+
+cfc = ggplot(data = data, aes(x = Date, y = CFC11)) +
+  geom_line() +
+  geom_point() +
+  theme_bw() +
+  labs(title = "Chlorofluorocarbons")
+
+grid.arrange(ncol = 2, co, co2, meth, no2, cfc)
+```
+
+Figure 2: 
+```{r}
+temp_clean_data = na.omit(data)
+
+start_year = as.numeric(format(temp_clean_data$Date[1], "%Y"))
+start_month = as.numeric(format(temp_clean_data$Date[1], "%m"))
+  #I need to make sure I specify the start year and month from within my data 
+
+CO2ts = ts(temp_clean_data$CO2,
+           start = c(start_year, start_month),
+           frequency = 12)
+
+decomp_co2 = stl(CO2ts, s.window = "periodic")
+
+plot(decomp_co2)
+```
+
+
+Figure 3:
+```{r}
+ggpairs(data[, -c(1)]) +theme_bw()
+```
+
+Figure 4:
+```{r}
+aggr(data, col = mdc(1:2), numbers = TRUE, softVars = TRUE, labels = names(data), cex.axis = 1, gap = 3, ylab = c("Proportion of Missingness", "Missingness Pattern"))
+```
+
+Figure 5/10:
+```{r}
+data$year = format(as.Date(data$Date, format="%Y-%m-%d"),"%Y")
+  #Making a column for year
+
+clean_data = data %>% 
+  filter(year != 2013)
+
+full_data  = clean_data %>%
+  complete(Date = seq.Date(from = min(Date),
+                           to   = max(Date),
+                           by   = "month"))
+#The complete() function fills in missing data 
+#Fillls in rows of data that is missing from the min and max of my data by month
+#Maintains ordering 
+
+full_data = full_data %>% select(-year)
+  #Removing the unneeded year column 
+
+ggplot_na_distribution(full_data$CO2)
+ggplot_na_distribution(full_data$CO)
+  #Distribute the values of missing data well 
+  #Can see the veryt clearn gaps in the data 
+
+
+statsNA(data$CO)
+
+statsNA(data$CO2)
+
+data_imp = na_kalman(full_data)
+  #IMputing the missing values 
+
+ggplot_na_imputations(full_data$CO, data_imp$CO)
+ggplot_na_imputations(full_data$CO2, data_imp$CO2)
+  #PLots hwo the values were imputed 
+
+
+```
+
+
+Figure 6:
+
+```{r}
+data_na_colour = data %>% 
+  mutate(colour_na = ifelse(rowSums(is.na(across(c(1:6)))) == 0, "black", "red"))
+
+par(mfrow = c(2,3))
+
+plot(density(na.omit(filter(data_na_colour, colour_na =="black"))$CO), col = "black", main = "CO")
+lines(density(na.omit(filter(data_na_colour, colour_na == "red")$CO)), col = "red")
+
+plot(density(na.omit(filter(data_na_colour, colour_na =="black"))$CO2), col = "black", main = "CO2")
+lines(density(na.omit(filter(data_na_colour, colour_na == "red")$CO2)), col = "red")
+
+plot(density(na.omit(filter(data_na_colour, colour_na =="black"))$Methane), col = "black", main = "Methane")
+lines(density(na.omit(filter(data_na_colour, colour_na == "red")$Methane)), col = "red")
+
+plot(density(na.omit(filter(data_na_colour, colour_na =="black"))$CFC11), col = "black", main = "CFC")
+lines(density(na.omit(filter(data_na_colour, colour_na == "red")$CFC11)), col = "red")
+
+plot(density(na.omit(filter(data_na_colour, colour_na =="black"))$NitrousOx), col = "black", main = "NO2")
+lines(density(na.omit(filter(data_na_colour, colour_na == "red")$NitrousOx)), col = "red")
+
+```
+
+Figure 7:
+```{r}
+data_na_colour = data %>% 
+  mutate(colour_na = ifelse(rowSums(is.na(across(c(1:6)))) == 0, "black", "red"))
+  #This creates a neew df with a new column that stores a colour value based on whether NA values are present 
+
+co = ggplot(data = data_na_colour, aes(y = CO, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs(title = "CO",
+       x = element_blank())
+
+co2 = ggplot(data = data_na_colour, aes(y = CO2, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs(title = "CO2",
+       x = element_blank())
+
+meth = ggplot(data = data_na_colour, aes(y = Methane, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs(title = "Methane", 
+       x = element_blank())
+
+no2 = ggplot(data = data_na_colour, aes(y = NitrousOx, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs(title = "NO2", 
+       x = element_blank())
+
+cfc = ggplot(data = data_na_colour, aes(y = CFC11, x = factor(1))) + 
+  geom_jitter(color = data_na_colour$colour_na, alpha = 0.5, width = 0.1) +
+  theme_bw() +
+  labs(title = "CFCs", 
+       x = element_blank())
+
+grid.arrange(ncol = 5, co, co2, meth, no2, cfc)
+
+```
+
+Figure 8:
+```{r}
+marginplot(data[,c("CO", "CO2")], col = mdc(1:2), cex.numbers = 1.2, pch = 19)
+```
+
+Figure 9:
+```{r}
+
+ggplot(data = data, aes(x = year)) + 
+  geom_bar(stat = "count") +
+  theme_bw() +
+  labs(x = "Year", 
+       title = "Number of Readings Taken per Year") +
+  scale_y_discrete(name = "Number of Readings", 
+                 limits = seq(0,12, 2))
+
+
+data_long = pivot_longer(data, cols = c(2:6), names_to = "Name", values_to = "Values")
+
+ggplot(data = data_long, aes(x = year, y = Values)) + 
+  geom_violin() +
+  geom_jitter(alpha = 0.2, aes(color = Name)) +
+  facet_wrap(.~Name, scales = "free_y") +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 6)) +
+  theme(legend.position = "none")
+```
+
+Figure 10:
+```{r}
+ggpairs(clean_data[, -c(1,7)]) + theme_bw()
+  #Not including the time and motnh in the scatterplot 
+
+```
+
+Dimensionality Reduction:
+
+```{r Regression}
+na_rows = which(is.na(clean_data[,-c(1,7)]), arr.ind = TRUE)[1:34]
+
+imp_reg = mice(clean_data[,-c(1,7)], m = 5, seed = 42, print = FALSE)
+  #This creates 10 imputed datasets 
+
+xyplot(imp_reg, CO ~ CO2 | .imp, pch = 20, cex = 1.4)
+  #PLotting the imputed values 
+  # | .imp factes the plot by imputatiib number 
+
+densityplot(imp_reg)
+
+imp_reg = complete(imp_reg)
+
+```
+
+
+```{r Random Forest}
+
+imp_rf = mice(clean_data[,-c(1,7)], method = "rf", m = 5, seed = 42, print = FALSE)
+  #This creates 10 imputed datasets 
+
+xyplot(imp_rf, CO ~ CO2 | .imp, pch = 20, cex = 1.4)
+  #PLotting the imputed values 
+  # | .imp factes the plot by imputatiib number 
+
+densityplot(imp_rf)
+
+imp_rf = complete(imp_rf)
+
+```
+
+```{r PMM}
+imp_pmm = mice(clean_data[,-c(1,7)], method = "pmm", m = 5, seed = 42, print = FALSE)
+  #This creates 10 imputed datasets 
+
+xyplot(imp_pmm, CO ~ CO2 | .imp, pch = 20, cex = 1.4)
+  #PLotting the imputed values 
+  # | .imp factes the plot by imputatiib number 
+
+densityplot(imp_pmm)
+
+imp_pmm = complete(imp_pmm)
+
+```
+
+```{r superMice}
+columns = c("CO", "CO2")
+  #CO has more missing values -> this is being treated first 
+  #As less regression imputed (the worse imputation) is influencing this
+
+imputed_list = vector("list", 5)
+  #To store the dataframes 
+
+for (i in 1:5) {
+    #Repeating 5 times, equivalent to m = 5
+
+  imp_data = mice(clean_data[,-c(1,7)], m = 1, seed = 42 + i, print = FALSE)
+  imp_data = complete(imp_data)
+    #Filling missing values using single regression imputation 
+    #This is required as many SL.library methods require full data (except for the imputtaion column) 
+    
+    for (col in columns) {
+        #Iterating over each of the columns that require imputation (CO and CO2)
+
+    
+      na_index = which(is.na(clean_data[,-c(1,7)]), arr.ind = TRUE)
+    
+    #setting NA for target col
+      for (j in seq_len(nrow(na_index))) {
+        row_num = na_index[j, "row"]
+        col_index = na_index[j, "col"]
+            #Extracting the rowand column indexes for the na values 
+        
+        if (colnames(imp_data)[col_index] != col) {
+          next
+        }
+        
+        imp_data[row_num, col_index] = NA
+          #Changing back to NA (all fo the values that were NA)
+      }
+    
+    #imputing the current column using supermice 
+      imp_data = mice(imp_data,
+                       method = "SuperLearner",
+                       m = 1,
+                       seed = 42 + i,  
+                        #Varying the seed for variability among iterations
+                       print = FALSE,
+                       SL.library = c("SL.randomForest", "SL.glm", "SL.glmnet"))
+      imp_data = complete(imp_data)
+    }
+  
+  imputed_list[[i]] = imp_data
+    #Save the final imputed data frame for this iteration
+}
+
+#Assigning each to a variable for analysis 
+imp_data_1 = imputed_list[[1]]
+imp_data_2 = imputed_list[[2]]
+imp_data_3 = imputed_list[[3]]
+imp_data_4 = imputed_list[[4]]
+imp_data_5 = imputed_list[[5]]
+
+imp_data = imp_data_1 %>% 
+  mutate(na_row = ifelse(row_number() %in% na_rows, "na_row", "non_na"))
+#Assigning values to rows that contain NA values (for analysis of the imputed values)
+
+```
+
+Figure 11/12:
+```{r}
+par(mfrow = c(1,2))
+plot(density(na.omit(clean_data$CO)), col = "blue", main = "CO")
+lines(density(imp_data_1$CO), col = "red")
+lines(density(imp_data_2$CO), col = "red")
+lines(density(imp_data_3$CO), col = "red")
+lines(density(imp_data_4$CO), col = "red")
+lines(density(imp_data_5$CO), col = "red")
+
+plot(density(na.omit(clean_data$CO2)), col = "blue", main = "CO2")
+lines(density(imp_data_1$CO2), col = "red") 
+lines(density(imp_data_2$CO2), col = "red")
+lines(density(imp_data_3$CO2), col = "red") 
+lines(density(imp_data_4$CO2), col = "red") 
+lines(density(imp_data_5$CO2), col = "red") 
+
+
+ggpairs(
+  imp_data_1 %>% select(-na_row),  
+    #exclude na_row from the data used in the plot
+  mapping = aes(color = imp_data_1$na_row),  
+    #use it just for coloring
+  upper = list(continuous = wrap("cor", 
+                      method = "pearson", 
+                      use = "pairwise.complete.obs")),
+  diag = list(continuous = wrap("densityDiag", fill = "grey")),
+  lower = list(continuous = wrap("points", alpha = 0.6))) +
+  theme_bw()
+```
+
+Dimensionality reduction on the imputed data:
+
+Figure 13
+
+```{r}
+
+pc_data = imp_data %>% 
+  select( -c( "na_row"))
+  #Selecting just the numeric data for dimensionaltiy reduction 
+
+
+pc_out = prcomp(pc_data, scale = TRUE)
+
+summary(pc_out)
+
+pc_var = pc_out$sdev^2
+
+plot(pc_out, col = "steelblue", main = "Importance of Each PC")
+lines(x = 1:5, pc_var, type = "b", pch = 19, col = "red")
+
+ggpairs(pc_out$x) +theme_bw()
+
+
+```
+
+Figure 14
+```{r}
+
+autoplot(pc_out, loadings = TRUE, loadings.colour = "steelblue", 
+         loadings.label = TRUE, col = rgb(0,0,0,0.3)) + theme_bw()
+
+a = fviz_contrib(pc_out, choice = "var", axes = 1, top = 5)
+b = fviz_contrib(pc_out, choice = "var", axes = 2, top = 5)
+
+grid.arrange(a,b, ncol = 2)
+```
+
+Figure 15
+```{r fig.width=10, fig.height=6}
+
+sel_pc = cbind(pc_out$x[,1], pc_out$x[,2], clean_data["Date"])
+  #Extracting the values of the first PC and the date 
+colnames(sel_pc) = c("PC1", "PC2", "Date")
+
+start_year = as.numeric(format(sel_pc$Date[1], "%Y"))
+start_month = as.numeric(format(sel_pc$Date[1], "%m"))
+  #I need to make sure I specify the start year and month from within my data 
+
+PC1ts = ts(sel_pc$PC1,
+           start = c(start_year, start_month),
+           frequency = 12)
+
+decomp_pc1 = stl(PC1ts, s.window = "periodic")
+
+PC2ts = ts(sel_pc$PC2,
+           start = c(start_year, start_month),
+           frequency = 12)
+
+decomp_pc2 = stl(PC2ts, s.window = "periodic")
+
+
+a = autoplot(decomp_pc1) + theme_bw() +labs(y = "PC1")
+b = autoplot(decomp_pc2) + theme_bw() + labs(y = "PC2")
+fig.dim = c(8, 20)
+grid.arrange(a, b, ncol = 2)
+```
+
+
+Cluster Analysis 
+
+Figure 16
+```{r}
+pc_scaled = scale(sel_pc[,-3])
+  #Scaling the data 
+  #To account for potentially high variance 
+
+fviz_nbclust(pc_scaled, kmeans, method = "silhouette") +
+  labs(title = "K-means Sillhouette Scores")
+fviz_nbclust(pc_scaled, clara, method = "silhouette") +
+  labs(title = "PAM")
+fviz_nbclust(pc_scaled, hcut, method = "silhouette") +
+  labs(title = "Hierarchal")
+
+fviz_nbclust(pc_scaled, kmeans, method = "wss") +
+  labs(title = "wss")
+  #This does not have a major impact on the results (I would still have chosen 3)
+
+
+```
+
+Figure 17
+```{r}
+results = list()
+  #To store the results 
+  #Use reults[[]] = , to store 
+
+
+print(results)
+
+for (i in  1:10){
+  #Iterating over every number of cluster
+  
+  temp_clus = kmeans(pc_scaled, i, nstart = 25) 
+  
+  var_exp = temp_clus$betweenss / temp_clus$totss
+  
+  results[[i]] = var_exp
+}
+
+
+results = data.frame(results)
+colnames(results) = c(1:10)
+
+results = pivot_longer(results, cols = everything())
+  #Converting to long formatting for plotting using ggplot 
+
+ggplot(data = results, aes(x = as.numeric(name), y = value, fill = value)) +
+  geom_bar(stat = "identity") + 
+  theme_bw() +
+  scale_x_discrete(limits = c(1:10)) +
+  labs(x = "Value of K", 
+       y = "Propotion of Variance Explained") +
+  theme(legend.position = "none")
+
+```
+
+Figure 18:
+```{r}
+km_clus = kmeans(pc_scaled, 3, nstart = 25)
+
+var_exp = km_clus$betweenss / km_clus$totss
+print(paste0("The variance explained by these clusters are: ", var_exp))
+
+fviz_cluster(km_clus, pc_scaled, ellipse.type = "norm") + theme_bw() + labs(title = "K-means Cluster Plot")
+
+
+
+```
+
+Figure 19:
+```{r}
+gc_clus = Mclust(pc_scaled)
+
+gc_clus$BIC
+
+plot(gc_clus, what = "BIC")
+
+```
+
+Figure 20/21
+```{r}
+eee_clus = Mclust(pc_scaled, G = 3, modelNames = "EEE")
+
+plot(eee_clus, what = "classification")
+plot(eee_clus, what = "density")
+
+```
+
+
+Figure 22:
+```{r}
+
+
+time_km = data.frame(km_clus$cluster)
+time_km = cbind(time_km, clean_data$Date)
+colnames(time_km) = c("Cluster", "Date") 
+
+ggplot(data = time_km, aes(x = Date, y = Cluster)) + 
+  geom_point(aes(col = as.factor(Cluster))) + 
+  geom_line(alpha = 0.3) + theme_bw() +
+  theme(legend.position = "none") +
+  scale_y_discrete(limits = c(1:3))
+
+class(time_km$Date)
+
+time_gs = data.frame(eee_clus$classification)
+time_gs = cbind(time_gs, clean_data$Date)
+colnames(time_gs) = c("Cluster", "Date")
+
+ggplot(data = time_gs, aes(x = Date, y = Cluster)) +
+  geom_point(aes(col = as.factor(Cluster))) + 
+  geom_line(alpha = 0.3) + theme_bw() +
+  theme(legend.position = "none") +
+  scale_y_discrete(limits = c(1:3))
+
+```
+
+
+Figure 23
+```{r}
+na_rows = na_index[, "row"]
+  #This is all of the rows that contained NA values 
+
+to_pc = function(input_data){
+  pc = prcomp(input_data, scale = TRUE)
+    #Converts to PC
+  
+  pc = cbind(pc$x[,1], pc$x[,2])
+  colnames(pc) = c("PC1", "PC2")
+    #Extracts the PCs 
+  
+  pc = data.frame(pc)
+  
+  pc = pc %>% 
+      mutate(was_na = ifelse(row_number() %in% na_rows, "na_row", "non_na"))
+  #Variable assigned to rows that had values imputed 
+  
+  pc = pc %>% 
+    filter(was_na == "na_row")
+    #Only selecting the coords that had values imputed 
+  
+  pc$number = 1:nrow(pc)
+  
+  return(pc)
+}
+
+temp = sel_pc %>%
+  mutate(was_na = ifelse(row_number() %in% na_rows, "na_row", "non_na"))
+  
+temp$M = 1
+  #Saving the number of the imputed dataset (1-5)
+
+all_data = temp %>% select(- Date) %>%
+  filter(was_na == "na_row")
+  #This will store all of the coordinates for the NA values
+  #For every imputed dataset 
+
+all_data$number = 1:nrow(all_data)
+
+temp = to_pc(imp_data_2) 
+  #This will extract the PC's
+temp$M = 2
+all_data = rbind(all_data, filter(temp, was_na == "na_row"))
+
+temp = to_pc(imp_data_3) 
+temp$M = 3
+all_data = rbind(all_data, filter(temp, was_na == "na_row"))
+
+temp = to_pc(imp_data_4) 
+temp$M = 4
+all_data = rbind(all_data, filter(temp, was_na == "na_row"))
+
+temp = to_pc(imp_data_5) 
+temp$M = 5
+all_data = rbind(all_data, filter(temp, was_na == "na_row"))
+
+imputed = all_data %>% 
+  filter(M == 1) %>% 
+  select(number, imputed_x = PC1, imputed_y = PC2)
+  #This selects the points I used in my analysis 
+  #Where M = 1
+
+others = all_data %>% 
+  filter(M %in% 2:5)
+  #Selecting all the other points generated during my multiple imputation
+
+segments_data = others %>% 
+  left_join(imputed, by = "number")
+  #Joining the two together 
+
+
+ggplot(data = filter(all_data, M != 1), aes(x = PC1, y = PC2, color = factor(M))) +
+  geom_point(alpha = 0.4, size = 2) +
+  geom_point(data = filter(all_data, M == 1), aes(x = PC1, y = PC2), fill = "blue" , size = 3, alpha = 0.8, shape = 24) +
+  geom_segment(data = segments_data, 
+               aes(x = PC1, y = PC2, xend = imputed_x, yend = imputed_y),
+               arrow = arrow(length = unit(0.15, "cm")), 
+               color = "blue", linewidth = 0.5, linetype = "dashed",
+               alpha = 0.4) +
+    #Adding a line connecting the point I used and the other points from M 
+  theme_bw() + 
+  labs(color = "Imputed Dataset") +
+  theme(legend.position = "bottom")
+
+
+```
+
+Figure 24:
+```{r}
+pc = prcomp(select(data_imp, -c(1)), scale = TRUE)
+pc = cbind(pc$x[,1], pc$x[,2])
+colnames(pc) = c("PC1", "PC2")
+pc = data.frame(pc)
+  #Dataframe of the PC's
+
+pc_scaled = scale(pc)
+
+gc_time = Mclust(pc_scaled)
+
+gc_time$BIC
+
+plot(gc_time, what = "BIC")
+
+best_time_clus = Mclust(pc_scaled, G = 7, modelNames = "VVV")
+
+plot(best_time_clus, what = "classification")
+plot(best_time_clus, what = "density")
+
+```
+
+```{r}
+summary(select(data, -c(1,7)))
+```
+
+
+
+
+```{r}
+# Define the continuous variables (adjust names if necessary)
+continuous_vars <- c("CO", "CO2", "Methane", "NitrousOx", "CFC11")
+
+# Loop through each variable and output outlier information along with the year
+for (var in continuous_vars) {
+  # Calculate quartiles and IQR for the variable, ignoring NA values
+  Q1 <- quantile(data[[var]], 0.25, na.rm = TRUE)
+  Q3 <- quantile(data[[var]], 0.75, na.rm = TRUE)
+  IQR_val <- Q3 - Q1
+  
+  # Define lower and upper bounds for outliers
+  lower_bound <- Q1 - 1.5 * IQR_val
+  upper_bound <- Q3 + 1.5 * IQR_val
+  
+  # Filter rows that are outliers for this variable, ignoring NA values
+  outliers_df <- data[!is.na(data[[var]]) & (data[[var]] < lower_bound | data[[var]] > upper_bound), ]
+  
+  cat("\nOutliers in", var, ":\n")
+  
+  if (nrow(outliers_df) == 0) {
+    cat("No outliers found based on the 1.5 * IQR rule.\n")
+  } else {
+    cat("Found", nrow(outliers_df), "outlier(s).\n")
+    # Loop through each outlier and print its year and value
+    for (i in 1:nrow(outliers_df)) {
+      outlier_val <- round(outliers_df[[var]][i], 2)
+      year_val <- outliers_df[["year"]][i]
+      cat("Year:", year_val, "- Value:", outlier_val, "\n")
+    }
+  }
+}
+
+
+
+```
+
